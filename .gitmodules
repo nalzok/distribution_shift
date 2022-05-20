@@ -1,0 +1,3 @@
+[submodule "dsprites-dataset"]
+	path = dsprites-dataset
+	url = git@github.com:deepmind/dsprites-dataset.git
