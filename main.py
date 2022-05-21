@@ -1,85 +1,100 @@
-import numpy as np
+import itertools
+
+import h5py
 import jax
 import jax.numpy as jnp
 
+import haiku as hk
 import optax
-import equinox as eqx
 
 
-DATA_PATH = 'dsprites-dataset/dsprites_ndarray_co1sh3sc6or40x32y32_64x64.npz'
+DATA_PATH = 'data/3dshapes.h5'
+
+# floor hue:    10 values linearly spaced in [0, 1]
+# wall hue:     10 values linearly spaced in [0, 1]
+# object hue:   10 values linearly spaced in [0, 1]
+# scale:        8 values linearly spaced in [0, 1]
+# shape:        4 values in [0, 1, 2, 3]
+# orientation:  15 values linearly spaced in [-30, 30]
+num_classes = [10, 10, 10, 8, 4, 15]
+
+Model = hk.nets.ResNet18
 
 
-def dataloader(weight, batch_size, *, key):
-    with np.load(DATA_PATH) as data:
-        X = data['imgs']
-        Y = data['latents_values']
+def dataloader(weight, label_col, batch_size, *, key, fake_data = False):
+    if fake_data:
         while True:
-            idx = jax.random.choice(key, X.shape[0], (batch_size,), weight)
-            yield X[idx], Y[idx]
+            yield jnp.zeros((batch_size, 64, 64, 3)), jnp.zeros(batch_size)
+
+    with h5py.File(DATA_PATH) as data:
+        X = jnp.array(data['images'])/255.  # NHWC
+        Y = jnp.array(data['labels'][:, label_col])
+
+        @jax.jit
+        def next_batch(key):
+            idx = jax.random.choice(key, X.shape[0], (batch_size,), p=weight)
+            return key, X[idx], Y[idx]
+
+        while True:
+            key, X_batch, Y_batch = next_batch(key)
+            yield X_batch, Y_batch
 
 
-class RNN(eqx.Module):
-    hidden_size: int
-    cell: eqx.nn.GRUCell
-    linear: eqx.nn.Linear
+def train():
+    Z_weight = jnp.ones(480000) / 480000
+    label_col = 0
+    batch_size = 32
+    learning_rate = 0.001
 
-    def __init__(self, in_size, out_size, hidden_size, *, key):
-        ckey, lkey = jax.random.split(key)
-        self.hidden_size = hidden_size
-        self.cell = eqx.nn.GRUCell(in_size, hidden_size, key=ckey)
-        self.linear = eqx.nn.Linear(hidden_size, out_size, key=lkey)
+    def forward(input, is_training):
+        net = Model(num_classes[label_col], resnet_v2=True)
+        output = net(input, is_training)
+        return output
 
-    def __call__(self, input):
-        hidden = jnp.zeros((self.hidden_size,))
+    def learner_fn(input, ground_truth):
+        logits = forward(input, True)
+        labels = jax.nn.one_hot(ground_truth, num_classes[label_col])
+        return jnp.mean(optax.softmax_cross_entropy(logits, labels))
 
-        def f(carry, inp):
-            return self.cell(inp, carry), None
+    learner_fn_t = hk.transform_with_state(learner_fn)
+    learner_fn_t = hk.without_apply_rng(learner_fn_t)
 
-        out, _ = jax.lax.scan(f, hidden, input)
-        return jax.nn.softmax(self.linear(out))
+    @jax.jit
+    def train_step(params, state, opt_state, X, y):
+        (loss, state), grads = jax.value_and_grad(learner_fn_t.apply, has_aux=True)(params, state, X, y)
+        updates, opt_state = optimizer.update(grads, opt_state, params)
+        params = optax.apply_updates(params, updates)
+        return params, state, opt_state, loss
+    
+    rng = jax.random.PRNGKey(42)
+    loader_rng, rng = jax.random.split(rng)
+    loader = dataloader(Z_weight, label_col, batch_size, key=loader_rng)
 
+    X, y = next(loader)
+    params, state = learner_fn_t.init(rng, X, y)
 
-def main(
-    batch_size=32,
-    learning_rate=3e-3,
-    steps=200,
-    hidden_size=16,
-    seed=42,
-):
-    loader_key, model_key = jax.random.split(jax.random.PRNGKey(seed))
-    weight = jnp.ones(737280) / 737280
-    iter_data = dataloader(weight, batch_size, key=loader_key)
+    optimizer = optax.adam(learning_rate)
+    opt_state = optimizer.init(params)
 
-    model = RNN(in_size=2, out_size=1, hidden_size=hidden_size, key=model_key)
+    # Training
+    for X, y in itertools.islice(loader, 50):
+        params, state, opt_state, loss = train_step(params, state, opt_state, X, y)
+        print(loss)
 
-    @eqx.filter_value_and_grad
-    def compute_loss(model, x, y):
-        pred_y = jax.vmap(model)(x)
-        # Trains with respect to binary cross-entropy
-        return -jnp.mean(y * jnp.log(pred_y) + (1 - y) * jnp.log(1 - pred_y))
+    forward_t = hk.transform_with_state(forward)
+    forward_t = hk.without_apply_rng(forward_t)
 
-    # Important for efficiency whenever you use JAX: wrap everything into a single JIT
-    # region.
-    @eqx.filter_jit
-    def make_step(model, x, y, opt_state):
-        loss, grads = compute_loss(model, x, y)
-        updates, opt_state = optim.update(grads, opt_state)
-        model = eqx.apply_updates(model, updates)
-        return loss, model, opt_state
+    @jax.jit
+    def eval_step(params, state, X):
+        logits = forward_t.apply(params, state, X, False)
+        return jnp.argmax(logits, axis=-1)
 
-    optim = optax.adam(learning_rate)
-    opt_state = optim.init(model)
-    for step, (x, y) in zip(range(steps), iter_data):
-        loss, model, opt_state = make_step(model, x, y, opt_state)
-        loss = loss.item()
-        print(f"step={step}, loss={loss}")
-
-    # pred_ys = jax.vmap(model)(xs)
-    # num_correct = jnp.sum((pred_ys > 0.5) == ys)
-    # final_accuracy = (num_correct / dataset_size).item()
-    # print(f"final_accuracy={final_accuracy}")
+    # Evaluating
+    for X, y in itertools.islice(loader, 50):
+        predictions = eval_step(params, state, X)
+        accuracy = jnp.mean(predictions == y)
+        print(accuracy)
 
 
 if __name__ == '__main__':
-    main()
-
+    train()

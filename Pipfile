@@ -6,6 +6,9 @@ name = "pypi"
 [packages]
 equinox = "*"
 optax = "*"
+chex = "*"
+dm-haiku = "*"
+h5py = "*"
 
 [dev-packages]
 
