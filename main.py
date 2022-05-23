@@ -1,99 +1,120 @@
+import time
+from contextlib import redirect_stdout
 import itertools
 
-import h5py
+import numpy as np
 import jax
 import jax.numpy as jnp
 
 import haiku as hk
 import optax
 
-
-DATA_PATH = 'data/3dshapes.h5'
-
-# floor hue:    10 values linearly spaced in [0, 1]
-# wall hue:     10 values linearly spaced in [0, 1]
-# object hue:   10 values linearly spaced in [0, 1]
-# scale:        8 values linearly spaced in [0, 1]
-# shape:        4 values in [0, 1, 2, 3]
-# orientation:  15 values linearly spaced in [-30, 30]
-num_classes = [10, 10, 10, 8, 4, 15]
-
-Model = hk.nets.ResNet18
+from dataloader import num_classes, Y_full, random_sample, full_pass
 
 
-def dataloader(weight, label_col, batch_size, *, key, fake_data = False):
-    if fake_data:
-        while True:
-            yield jnp.zeros((batch_size, 64, 64, 3)), jnp.zeros(batch_size)
+scale = Y_full[:, 3]/(num_classes[3] - 1)
+shape = Y_full[:, 4]/(num_classes[4] - 1)
+orientation = Y_full[:, 5]/(num_classes[5] - 1)
 
-    with h5py.File(DATA_PATH) as data:
-        X = jnp.array(data['images'])/255.  # NHWC
-        Y = jnp.array(data['labels'][:, label_col])
+weights = {
+    'uniform': np.ones(480000),
+    'scale': scale,
+    'shape': shape,
+    'orientation': orientation,
+    'scale*shape': scale * shape,
+    'scale*orientation': scale * orientation,
+    'shape*orientation': shape * orientation,
+    'scale*shape*orientation': scale * shape * orientation,
+}
 
-        @jax.jit
-        def next_batch(key):
-            idx = jax.random.choice(key, X.shape[0], (batch_size,), p=weight)
-            return key, X[idx], Y[idx]
-
-        while True:
-            key, X_batch, Y_batch = next_batch(key)
-            yield X_batch, Y_batch
-
+models = [hk.nets.ResNet200, hk.nets.ResNet152, hk.nets.ResNet101,
+        hk.nets.ResNet50, hk.nets.ResNet34, hk.nets.ResNet18]
 
 def train():
-    Z_weight = jnp.ones(480000) / 480000
-    label_col = 0
-    batch_size = 32
+    label_col = 4   # predict shape
+    batch_size = 2048
+    num_batches = 1024
+    noise_scale = 0.01
     learning_rate = 0.001
+    test_replication = jax.device_count()
 
-    def forward(input, is_training):
-        net = Model(num_classes[label_col], resnet_v2=True)
-        output = net(input, is_training)
-        return output
+    experiment_id = int(time.time())
+    logfile = f'logs/{experiment_id}_label{label_col}_noise{noise_scale.hex()}_batch{batch_size}x{num_batches}_lr{learning_rate.hex()}_rep{test_replication}.log'
+    with open(logfile, 'x') as log:
+        with redirect_stdout(log):
 
-    def learner_fn(input, ground_truth):
-        logits = forward(input, True)
-        labels = jax.nn.one_hot(ground_truth, num_classes[label_col])
-        return jnp.mean(optax.softmax_cross_entropy(logits, labels))
+            for Model in models:
+                def forward(X, is_training):
+                    net = Model(num_classes[label_col], resnet_v2=True)
+                    output = net(X, is_training)
+                    return output
 
-    learner_fn_t = hk.transform_with_state(learner_fn)
-    learner_fn_t = hk.without_apply_rng(learner_fn_t)
+                def learner_fn(X, y):
+                    logits = forward(X, True)
+                    labels = jax.nn.one_hot(y[:, label_col], num_classes[label_col])
+                    return jnp.mean(optax.softmax_cross_entropy(logits, labels))
 
-    @jax.jit
-    def train_step(params, state, opt_state, X, y):
-        (loss, state), grads = jax.value_and_grad(learner_fn_t.apply, has_aux=True)(params, state, X, y)
-        updates, opt_state = optimizer.update(grads, opt_state, params)
-        params = optax.apply_updates(params, updates)
-        return params, state, opt_state, loss
-    
-    rng = jax.random.PRNGKey(42)
-    loader_rng, rng = jax.random.split(rng)
-    loader = dataloader(Z_weight, label_col, batch_size, key=loader_rng)
+                learner_fn_t = hk.transform_with_state(learner_fn)
+                learner_fn_t = hk.without_apply_rng(learner_fn_t)
 
-    X, y = next(loader)
-    params, state = learner_fn_t.init(rng, X, y)
+                @jax.jit
+                def train_step(params, state, opt_state, X, y):
+                    (loss, state), grads = jax.value_and_grad(learner_fn_t.apply, has_aux=True)(params, state, X, y)
+                    updates, opt_state = optimizer.update(grads, opt_state, params)
+                    params = optax.apply_updates(params, updates)
+                    return params, state, opt_state, loss
+                
+                optimizer = optax.adam(learning_rate)
 
-    optimizer = optax.adam(learning_rate)
-    opt_state = optimizer.init(params)
+                @jax.jit
+                def initial_state(rng, X, y):
+                  params, state = learner_fn_t.init(rng, X, y)
+                  opt_state = optimizer.init(params)
+                  return params, state, opt_state
 
-    # Training
-    for X, y in itertools.islice(loader, 50):
-        params, state, opt_state, loss = train_step(params, state, opt_state, X, y)
-        print(loss)
+                for name, unnormalized in weights.items():
+                    weight = unnormalized / np.sum(unnormalized)
 
-    forward_t = hk.transform_with_state(forward)
-    forward_t = hk.without_apply_rng(forward_t)
+                    outfile = f'results/{experiment_id}_label{label_col}_noise{noise_scale.hex()}_batch{batch_size}x{num_batches}_lr{learning_rate.hex()}_rep{test_replication}_{Model.__name__}_{name}.npz'
+                    print('Unix epoch:', time.time())
+                    print('Working on', outfile)
 
-    @jax.jit
-    def eval_step(params, state, X):
-        logits = forward_t.apply(params, state, X, False)
-        return jnp.argmax(logits, axis=-1)
+                    train_loader = random_sample(batch_size, weight, noise_scale)
+                    X, y = next(train_loader)
+                    init_rng = jax.random.PRNGKey(42)
+                    params, state, opt_state = initial_state(init_rng, X, y)
 
-    # Evaluating
-    for X, y in itertools.islice(loader, 50):
-        predictions = eval_step(params, state, X)
-        accuracy = jnp.mean(predictions == y)
-        print(accuracy)
+                    # Training
+                    for i, (X, y) in itertools.islice(enumerate(train_loader), num_batches):
+                        params, state, opt_state, loss = train_step(params, state, opt_state, X, y)
+                        loss = jnp.asarray(loss).item()
+                        print(f'Train [{i+1}/{num_batches}]: {loss=}')
+
+                    forward_t = hk.transform_with_state(forward)
+                    forward_t = hk.without_apply_rng(forward_t)
+
+                    @jax.jit
+                    @jax.pmap
+                    def eval_step(params, state, X, y):
+                        logits, _ = forward_t.apply(params, state, X, False)
+                        labels = jax.nn.one_hot(y[:, label_col], num_classes[label_col])
+                        loss = optax.softmax_cross_entropy(logits, labels)
+                        accuracy = jnp.argmax(logits, axis=-1) == y
+                        return loss, accuracy
+
+                    # Evaluating
+                    pop_loss = np.empty((test_replication, 480000))
+                    pop_accuracy = np.empty((test_replication, 480000), dtype=bool)
+                    test_loader = full_pass(batch_size, noise_scale, test_replication)
+                    for i, (X, y) in enumerate(test_loader):
+                        batch_loss, batch_accuracy = jnp.asarray(eval_step(params, state, X, y))
+                        start = i * batch_size
+                        print(f'Test [{start}/480000]: {np.mean(batch_loss)=}, {np.mean(batch_accuracy)=}')
+                        pop_loss[:, start:start+batch_size] = batch_loss
+                        pop_accuracy[:, start:start+batch_size] = batch_accuracy
+                    
+                    np.savez_compressed(outfile, weight=weight, pop_loss=pop_loss)
+                    print(f'Saved to {outfile}')
 
 
 if __name__ == '__main__':

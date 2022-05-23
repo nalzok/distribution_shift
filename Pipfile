@@ -9,6 +9,7 @@ optax = "*"
 chex = "*"
 dm-haiku = "*"
 h5py = "*"
+scipy = "*"
 
 [dev-packages]
 

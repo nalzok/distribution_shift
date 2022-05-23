@@ -235,3 +235,5 @@ tags
 # End of https://www.toptal.com/developers/gitignore/api/linux,python,macos,vim
 
 data/3dshapes.h5
+logs/**.log
+results/**.npz
