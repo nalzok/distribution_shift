@@ -113,7 +113,7 @@ def train():
                         pop_loss[:, start:start+batch_size] = batch_loss
                         pop_accuracy[:, start:start+batch_size] = batch_accuracy
                     
-                    np.savez_compressed(outfile, weight=weight, pop_loss=pop_loss)
+                    np.savez_compressed(outfile, weight=weight, pop_loss=pop_loss, pop_accuracy=pop_accuracy)
                     print(f'Saved to {outfile}')
 
 
