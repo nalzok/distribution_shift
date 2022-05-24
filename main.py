@@ -12,9 +12,9 @@ import optax
 from dataloader import num_classes, Y_full, random_sample, full_pass
 
 
-scale = Y_full[:, 3]/(num_classes[3] - 1)
-shape = Y_full[:, 4]/(num_classes[4] - 1)
-orientation = Y_full[:, 5]/(num_classes[5] - 1)
+scale = Y_full[:, 3]/num_classes[3]
+shape = Y_full[:, 4]/num_classes[4]
+orientation = Y_full[:, 5]/num_classes[5]
 
 weights = {
     'uniform': np.ones(480000),
