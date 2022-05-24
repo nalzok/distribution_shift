@@ -22,6 +22,10 @@ weights = {
     'scale': scale,
     'shape': shape,
     'orientation': orientation,
+    'scale+shape': scale + shape,
+    'scale+orientation': scale + orientation,
+    'shape+orientation': shape + orientation,
+    'scale+shape+orientation': scale + shape + orientation,
     'scale*shape': scale * shape,
     'scale*orientation': scale * orientation,
     'shape*orientation': shape * orientation,
@@ -36,7 +40,7 @@ def train():
     noise_scale = 0.01
     replication = jax.local_device_count()
     local_batch_size = 2048
-    num_batches = 1024
+    num_batches = 512
     learning_rate = 0.001
 
     experiment_id = int(time.time())
