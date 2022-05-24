@@ -13,9 +13,9 @@ import optax
 from dataloader import num_classes, Y_full, random_sample, full_pass
 
 
-scale = Y_full[:, 3]/num_classes[3]
-shape = Y_full[:, 4]/num_classes[4]
-orientation = Y_full[:, 5]/num_classes[5]
+scale = Y_full[:, 3]/(num_classes[3] - 1)
+shape = Y_full[:, 4]/(num_classes[4] - 1)
+orientation = Y_full[:, 5]/(num_classes[5] - 1)
 
 weights = {
     'uniform': np.ones(480000),
@@ -69,14 +69,6 @@ def train():
                     updates, opt_state = optimizer.update(grads, opt_state, params)
                     params = optax.apply_updates(params, updates)
                     return params, state, opt_state, loss
-
-                @jax.pmap
-                def eval_step(params, state, X, y):
-                    logits, _ = forward_t.apply(params, state, X, False)
-                    labels = jax.nn.one_hot(y, num_classes[label_col])
-                    loss = optax.softmax_cross_entropy(logits, labels)
-                    accuracy = jnp.argmax(logits, axis=-1) == y
-                    return loss, accuracy
                 
                 optimizer = optax.adam(learning_rate)
 
@@ -85,6 +77,14 @@ def train():
                   params, state = learner_fn_t.init(rng, X, y)
                   opt_state = optimizer.init(params)
                   return params, state, opt_state
+
+                @jax.pmap
+                def eval_step(params, state, X, y):
+                    logits, _ = forward_t.apply(params, state, X, False)
+                    labels = jax.nn.one_hot(y, num_classes[label_col])
+                    loss = optax.softmax_cross_entropy(logits, labels)
+                    accuracy = jnp.argmax(logits, axis=-1) == y
+                    return loss, accuracy
 
                 for name, unnormalized in weights.items():
                     weight = unnormalized / np.sum(unnormalized)
@@ -102,19 +102,16 @@ def train():
                     # Training
                     for i, (X, y) in itertools.islice(enumerate(train_loader), num_batches):
                         params, state, opt_state, loss = train_step(params, state, opt_state, X, y)
-                        loss = jnp.asarray(loss).mean()
-                        print(f'Train [{i+1}/{num_batches}]: {loss=}')
+                        print(f'Train [{i+1}/{num_batches}]: {loss.mean()=}')
 
                     # Evaluating
                     pop_loss = np.empty((replication, 480000))
                     pop_accuracy = np.empty((replication, 480000), dtype=bool)
                     test_loader = full_pass(replication, local_batch_size, label_col, noise_scale)
                     for i, (X, y) in enumerate(test_loader):
-                        batch_loss, batch_accuracy = jnp.asarray(eval_step(params, state, X, y))
-                        print('batch_loss.shape, batch_accuracy.shape', batch_loss.shape, batch_accuracy.shape)
-                        print('batch_loss, batch_accuracy', batch_loss, batch_accuracy)
+                        batch_loss, batch_accuracy = eval_step(params, state, X, y)
                         start = i * local_batch_size
-                        print(f'Test [{start}/480000]: {np.mean(batch_loss)=}, {np.mean(batch_accuracy)=}')
+                        print(f'Test [{start}/480000]: {batch_loss.mean()=}, {batch_accuracy.mean()=}')
                         pop_loss[:, start:start+local_batch_size] = batch_loss
                         pop_accuracy[:, start:start+local_batch_size] = batch_accuracy
                     

@@ -20,7 +20,7 @@ with h5py.File(DATA_PATH) as data:
     images = np.array(data['images'], dtype=np.int8)
     labels = np.array(data['labels'])
     X_full = np.array(images, dtype=np.int8) # NHWC
-    Y_full = rankdata(np.array(labels), 'dense', axis=0)
+    Y_full = rankdata(np.array(labels), 'dense', axis=0) - 1
 
 
 def random_sample(replication, batch_size, label_col, noise_scale, weight):
