@@ -33,10 +33,10 @@ models = [hk.nets.ResNet18, hk.nets.ResNet34, hk.nets.ResNet50,
 
 def train():
     label_col = 4   # predict shape
+    noise_scale = 0.01
     replication = jax.local_device_count()
     local_batch_size = 2048
     num_batches = 1024
-    noise_scale = 0.01
     learning_rate = 0.001
 
     experiment_id = int(time.time())
@@ -55,7 +55,7 @@ def train():
 
                 def learner_fn(X, y):
                     logits = forward(X, True)
-                    labels = jax.nn.one_hot(y[:, label_col], num_classes[label_col])
+                    labels = jax.nn.one_hot(y, num_classes[label_col])
                     return jnp.mean(optax.softmax_cross_entropy(logits, labels))
 
                 learner_fn_t = hk.transform_with_state(learner_fn)
@@ -73,7 +73,7 @@ def train():
                 @jax.pmap
                 def eval_step(params, state, X, y):
                     logits, _ = forward_t.apply(params, state, X, False)
-                    labels = jax.nn.one_hot(y[:, label_col], num_classes[label_col])
+                    labels = jax.nn.one_hot(y, num_classes[label_col])
                     loss = optax.softmax_cross_entropy(logits, labels)
                     accuracy = jnp.argmax(logits, axis=-1) == y
                     return loss, accuracy
@@ -93,7 +93,7 @@ def train():
                     print('Unix epoch:', time.time())
                     print('Working on', outfile)
 
-                    train_loader = random_sample(replication, local_batch_size, weight, noise_scale)
+                    train_loader = random_sample(replication, local_batch_size, label_col, noise_scale, weight)
                     X, y = next(train_loader)
                     init_rng = jax.random.PRNGKey(42)
                     init_rng = jnp.broadcast_to(init_rng, (replication, *init_rng.shape))
@@ -108,9 +108,11 @@ def train():
                     # Evaluating
                     pop_loss = np.empty((replication, 480000))
                     pop_accuracy = np.empty((replication, 480000), dtype=bool)
-                    test_loader = full_pass(replication, local_batch_size, noise_scale)
+                    test_loader = full_pass(replication, local_batch_size, label_col, noise_scale)
                     for i, (X, y) in enumerate(test_loader):
                         batch_loss, batch_accuracy = jnp.asarray(eval_step(params, state, X, y))
+                        print('batch_loss.shape, batch_accuracy.shape', batch_loss.shape, batch_accuracy.shape)
+                        print('batch_loss, batch_accuracy', batch_loss, batch_accuracy)
                         start = i * local_batch_size
                         print(f'Test [{start}/480000]: {np.mean(batch_loss)=}, {np.mean(batch_accuracy)=}')
                         pop_loss[:, start:start+local_batch_size] = batch_loss
