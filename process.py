@@ -1,3 +1,4 @@
+import os
 import glob
 
 import numpy as np
@@ -11,7 +12,7 @@ def main(divergence_measure):
     models = set()
 
     uniform = np.ones(480000)/480000
-    timestamp = 1653369692
+    timestamp = os.environ['TIMESTAMP']
 
     for filename in glob.glob(f'results/{timestamp}_*.npz'):
         _, label, noise, rep, batch, lr, model, setting = filename.split('_')
@@ -39,11 +40,11 @@ def main(divergence_measure):
         expected_accuracies = []
         for train_setting in weights.keys():
             q = weights[train_setting]
-            unbalancedness = total_variation_distance(q, uniform)
+            unbalancedness = divergence_measure(q, uniform)
             for test_setting in weights.keys():
                 p = weights[test_setting]
                 unbalancednesses.append(unbalancedness)
-                divergences.append(total_variation_distance(p, q))
+                divergences.append(divergence_measure(p, q))
                 pop_loss = pop_losses[(train_setting, model)]
                 expected_losses.append(np.sum(p * pop_loss))
                 pop_accuracy = pop_accuracies[(train_setting, model)]
@@ -55,7 +56,7 @@ def main(divergence_measure):
         plt.ylabel('Test-train Divergence')
         plt.legend()
         plt.colorbar()
-        plt.savefig(f'plots/{model}_losses.png')
+        plt.savefig(f'plots/{timestamp}_{model}_losses.png')
         plt.clf()
 
         plt.scatter(unbalancednesses, divergences, c=expected_accuracies,
