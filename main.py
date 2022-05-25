@@ -106,6 +106,9 @@ def train():
                     # Training
                     for i, (X, y) in itertools.islice(enumerate(train_loader), num_batches):
                         params, state, opt_state, loss = train_step(params, state, opt_state, X, y)
+                        # Note that loss is actually an array of shape [num_devices], with identical
+                        # entries, because each device returns its copy of the loss, so we need
+                        # to unreplicate it.
                         print(f'Train [{i+1}/{num_batches}]: {loss.mean()=}')
 
                     # Evaluating

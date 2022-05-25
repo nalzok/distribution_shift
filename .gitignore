@@ -237,3 +237,4 @@ tags
 data/3dshapes.h5
 logs/**.log
 results/**.npz
+plots/**.png

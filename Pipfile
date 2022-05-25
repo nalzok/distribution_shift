@@ -9,6 +9,7 @@ dm-haiku = "*"
 h5py = "*"
 scipy = "*"
 chex = "*"
+matplotlib = "*"
 
 [dev-packages]
 
