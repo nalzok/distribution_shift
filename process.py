@@ -32,7 +32,7 @@ def main(divergence_measure):
             pop_losses[(setting, model)] = np.mean(data['pop_loss'], axis=0)
             pop_accuracies[(setting, model)] = np.mean(data['pop_accuracy'], axis=0)
 
-    models = {'ResNet18'}
+    models = {'ResNet18', 'ResNet34'}
     for model in models:
         unbalancednesses = []
         divergences = []

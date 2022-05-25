@@ -36,7 +36,7 @@ models = [hk.nets.ResNet18, hk.nets.ResNet34, hk.nets.ResNet50,
         hk.nets.ResNet101, hk.nets.ResNet152, hk.nets.ResNet200]
 
 def train():
-    label_col = 4   # predict shape
+    label_col = 3   # predict scale
     noise_scale = 0.01
     replication = jax.local_device_count()
     local_batch_size = 2048

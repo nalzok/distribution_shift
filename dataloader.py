@@ -25,8 +25,13 @@ with h5py.File(DATA_PATH) as data:
 
 def random_sample(replication, batch_size, label_col, noise_scale, weight):
     rng = np.random.default_rng(42)
+
+    train_set_size = int(0.632 * X_full.shape[0])
+    train_set_idx = rng.choice(X_full.shape[0], train_set_size, p=weight)
+
     while True:
-        idx = rng.choice(X_full.shape[0], replication*batch_size, p=weight)
+        batch_idx = rng.choice(train_set_size, replication*batch_size)
+        idx = train_set_idx[batch_idx]
         X_batch, Y_batch = X_full[idx]/255., Y_full[idx, label_col]
         X_batch = X_batch.reshape(replication, batch_size, *X_batch.shape[1:])
         Y_batch = Y_batch.reshape(replication, batch_size, *Y_batch.shape[1:])
