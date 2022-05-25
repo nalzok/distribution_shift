@@ -11,8 +11,9 @@ def main(divergence_measure):
     models = set()
 
     uniform = np.ones(480000)/480000
+    timestamp = 1653369692
 
-    for filename in glob.glob('results/1653369692_*.npz'):
+    for filename in glob.glob(f'results/{timestamp}_*.npz'):
         _, label, noise, rep, batch, lr, model, setting = filename.split('_')
         label_col = int(label[5:])
         noise_scale = float.fromhex(noise[5:])
@@ -63,7 +64,7 @@ def main(divergence_measure):
         plt.ylabel('Test-train Divergence')
         plt.legend()
         plt.colorbar()
-        plt.savefig(f'plots/{model}_accuracies.png')
+        plt.savefig(f'plots/{timestamp}_{model}_accuracies.png')
         plt.clf()
 
 
