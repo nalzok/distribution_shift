@@ -32,7 +32,6 @@ def main(divergence_measure):
             pop_losses[(setting, model)] = np.mean(data['pop_loss'], axis=0)
             pop_accuracies[(setting, model)] = np.mean(data['pop_accuracy'], axis=0)
 
-    models = {'ResNet18', 'ResNet34'}
     for model in models:
         unbalancednesses = []
         divergences = []
@@ -56,7 +55,7 @@ def main(divergence_measure):
         plt.ylabel('Test-train Divergence')
         plt.legend()
         plt.colorbar()
-        plt.savefig(f'plots/{timestamp}_{model}_losses.png')
+        plt.savefig(f'plots/experiment_qys_{model}_{label_col}_losses.png')
         plt.clf()
 
         plt.scatter(unbalancednesses, divergences, c=expected_accuracies,
@@ -65,7 +64,7 @@ def main(divergence_measure):
         plt.ylabel('Test-train Divergence')
         plt.legend()
         plt.colorbar()
-        plt.savefig(f'plots/{timestamp}_{model}_accuracies.png')
+        plt.savefig(f'plots/experiment_qys_{model}_{label_col}_accuracies.png')
         plt.clf()
 
 
